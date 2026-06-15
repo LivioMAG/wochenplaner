@@ -14,6 +14,7 @@
       <div>
         <p class="eyebrow">MVP</p>
         <h1>Wochen-Disposition</h1>
+        <p id="storage-status" class="storage-status" aria-live="polite">Daten werden automatisch in der lokalen Datenbank gespeichert</p>
       </div>
       <nav class="main-nav" aria-label="Hauptnavigation">
         <button class="nav-button active" data-page="employees">Mitarbeiter</button>
@@ -72,6 +73,18 @@
           <label>Spesen pro Arbeitstag CHF *<input id="settings-expenses" type="number" min="0" step="0.05" required /></label>
           <div class="form-actions"><button type="submit">Einstellungen speichern</button></div>
         </form>
+        <section class="card backup-card" aria-labelledby="backup-title">
+          <div>
+            <p class="eyebrow">Datensicherung</p>
+            <h3 id="backup-title">Dauerhaft speichern und wiederherstellen</h3>
+            <p class="muted">Alle Eingaben werden automatisch in einer lokalen Browser-Datenbank (IndexedDB) gespeichert. GitHub Pages kann ohne Backend oder GitHub-Token keine Dateien im Repository überschreiben; für Gerätewechsel oder eine GitHub-Ablage kannst du deshalb eine JSON-Backup-Datei herunterladen und in dein Repository legen.</p>
+          </div>
+          <div class="form-actions">
+            <button type="button" id="export-backup">Backup herunterladen</button>
+            <label class="file-button secondary" for="import-backup">Backup importieren</label>
+            <input id="import-backup" class="visually-hidden" type="file" accept="application/json,.json" />
+          </div>
+        </section>
       </section>
     </main>
 
