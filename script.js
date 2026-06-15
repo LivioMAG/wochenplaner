@@ -163,15 +163,79 @@ function importBackup(file) {
 }
 
 
-function exportPdf() {
+function getDispositionPdfBody(includeCategory) {
+  const days = getWeekDates(state.settings.year, state.settings.calendarWeek);
+  return state.employees.map((employee) => [`${employee.firstName} ${employee.lastName || ''}`.trim(), ...days.map((day) => {
+    const assignment = findAssignment(employee.id, day.key);
+    const work = state.works.find((item) => item.id === assignment?.workId);
+    if (assignment?.status === 'absent') return 'Abwesend';
+    if (!work) return '';
+    return includeCategory ? `${work.title} (${CATEGORIES[work.category]})` : work.title;
+  })]);
+}
+function addPdfHeader(doc, title, subtitle) {
+  doc.setFillColor(15, 23, 42);
+  doc.rect(0, 0, 210, 34, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(18);
+  doc.text(title, 14, 16);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.text(subtitle, 14, 24);
+  doc.setTextColor(24, 32, 47);
+}
+function exportPdfFull() {
   const jspdf = window.jspdf?.jsPDF; if (!jspdf) { alert('PDF-Bibliothek konnte nicht geladen werden.'); return; }
   const doc = new jspdf(); const days = getWeekDates(state.settings.year, state.settings.calendarWeek); const costs = calculateCosts();
-  doc.text(`Disposition KW ${state.settings.calendarWeek} / ${state.settings.year}`, 14, 16);
-  doc.autoTable({ startY: 24, head: [['Mitarbeiter', ...days.map((d) => `${d.label} ${formatDate(d.date)}`)]], body: state.employees.map((e) => [`${e.firstName} ${e.lastName || ''}`.trim(), ...days.map((d) => { const a = findAssignment(e.id, d.key); const w = state.works.find((item) => item.id === a?.workId); return a?.status === 'absent' ? 'Abwesend' : (w ? `${w.title} (${CATEGORIES[w.category]})` : ''); })]) });
-  doc.autoTable({ startY: doc.lastAutoTable.finalY + 10, head: [['Kostenübersicht', 'CHF']], body: [['Lohnkosten total', money(costs.wageTotal)], ['Spesen total', money(costs.expensesTotal)], ['Gesamtkosten total', money(costs.total)]] });
-  doc.autoTable({ startY: doc.lastAutoTable.finalY + 10, head: [['Mitarbeiter', 'Tage', 'Lohn', 'Spesen', 'Total']], body: costs.byEmployee.map((r) => [`${r.employee.firstName} ${r.employee.lastName || ''}`.trim(), r.workdays, money(r.wage), money(r.expenses), money(r.total)]) });
-  doc.autoTable({ startY: doc.lastAutoTable.finalY + 10, head: [['Los / Zuordnung', 'Kosten']], body: Object.entries(CATEGORIES).map(([key, label]) => [label, money(costs.byCategory[key])]) });
-  doc.save(`Disposition-KW-${state.settings.calendarWeek}-${state.settings.year}.pdf`);
+  addPdfHeader(doc, `Disposition KW ${state.settings.calendarWeek} / ${state.settings.year}`, 'Vollständiger Export mit Lohnkosten, Spesen und Los-Kosten');
+  doc.autoTable({ startY: 42, head: [['Mitarbeiter', ...days.map((d) => `${d.label} ${formatDate(d.date)}`)]], body: getDispositionPdfBody(true), headStyles: { fillColor: [37, 99, 235] }, alternateRowStyles: { fillColor: [248, 250, 252] } });
+  doc.autoTable({ startY: doc.lastAutoTable.finalY + 10, head: [['Kostenübersicht', 'CHF']], body: [['Lohnkosten total', money(costs.wageTotal)], ['Spesen total', money(costs.expensesTotal)], ['Gesamtkosten total', money(costs.total)]], headStyles: { fillColor: [17, 24, 39] } });
+  doc.autoTable({ startY: doc.lastAutoTable.finalY + 10, head: [['Mitarbeiter', 'Tage', 'Lohn', 'Spesen', 'Total']], body: costs.byEmployee.map((r) => [`${r.employee.firstName} ${r.employee.lastName || ''}`.trim(), r.workdays, money(r.wage), money(r.expenses), money(r.total)]), headStyles: { fillColor: [37, 99, 235] } });
+  doc.autoTable({ startY: doc.lastAutoTable.finalY + 10, head: [['Los / Zuordnung', 'Kosten']], body: Object.entries(CATEGORIES).map(([key, label]) => [label, money(costs.byCategory[key])]), headStyles: { fillColor: [37, 99, 235] } });
+  doc.save(`Disposition-mit-Kosten-KW-${state.settings.calendarWeek}-${state.settings.year}.pdf`);
+}
+function exportPdfDispoOnly() {
+  const jspdf = window.jspdf?.jsPDF; if (!jspdf) { alert('PDF-Bibliothek konnte nicht geladen werden.'); return; }
+  const doc = new jspdf({ orientation: 'landscape' }); const days = getWeekDates(state.settings.year, state.settings.calendarWeek);
+  doc.setFillColor(239, 246, 255);
+  doc.rect(0, 0, 297, 210, 'F');
+  doc.setFillColor(15, 23, 42);
+  doc.roundedRect(10, 10, 277, 30, 5, 5, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(22);
+  doc.text('Dispo', 18, 25);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(11);
+  doc.text(`KW ${state.settings.calendarWeek} / ${state.settings.year} · kompakter Plan ohne Kosten und ohne Los-Zuordnung`, 18, 33);
+  doc.setTextColor(24, 32, 47);
+  doc.autoTable({
+    startY: 50,
+    margin: { left: 10, right: 10 },
+    head: [['Team', ...days.map((d) => `${d.label}\n${formatDate(d.date)}`)]],
+    body: getDispositionPdfBody(false),
+    styles: { cellPadding: 5, fontSize: 10, lineColor: [226, 232, 240], lineWidth: 0.2, valign: 'middle' },
+    headStyles: { fillColor: [37, 99, 235], textColor: [255, 255, 255], fontStyle: 'bold', halign: 'center' },
+    bodyStyles: { minCellHeight: 16 },
+    alternateRowStyles: { fillColor: [255, 255, 255] },
+    columnStyles: { 0: { fillColor: [248, 250, 252], fontStyle: 'bold', cellWidth: 36 } },
+    didParseCell(data) {
+      if (data.section === 'body' && data.column.index > 0 && data.cell.raw === 'Abwesend') {
+        data.cell.styles.fillColor = [17, 24, 39];
+        data.cell.styles.textColor = [255, 255, 255];
+        data.cell.styles.fontStyle = 'bold';
+      } else if (data.section === 'body' && data.column.index > 0 && data.cell.raw) {
+        data.cell.styles.fillColor = [220, 252, 231];
+        data.cell.styles.textColor = [22, 101, 52];
+        data.cell.styles.fontStyle = 'bold';
+      }
+    },
+  });
+  doc.setFontSize(8);
+  doc.setTextColor(100, 116, 139);
+  doc.text('Export: Nur Dispo · Aufgaben werden bewusst nur als kurzer Titel angezeigt.', 10, 202);
+  doc.save(`Nur-Dispo-KW-${state.settings.calendarWeek}-${state.settings.year}.pdf`);
 }
 
 function bindEvents() {
@@ -186,7 +250,8 @@ function bindEvents() {
   document.body.addEventListener('click', (event) => handleActionClick(event));
   document.querySelector('#assignment-status').addEventListener('change', () => document.querySelector('#assignment-work-label').hidden = document.querySelector('#assignment-status').value !== 'assigned');
   document.querySelector('#assignment-save').addEventListener('click', (event) => { event.preventDefault(); if (!activeAssignment) return; const status = document.querySelector('#assignment-status').value; const workId = document.querySelector('#assignment-work').value; if (status === 'assigned' && !workId) return; upsertAssignment(activeAssignment.employeeId, activeAssignment.weekday, status, workId); document.querySelector('#assignment-dialog').close(); });
-  document.querySelector('#export-pdf').addEventListener('click', exportPdf);
+  document.querySelector('#export-pdf-full').addEventListener('click', exportPdfFull);
+  document.querySelector('#export-pdf-dispo').addEventListener('click', exportPdfDispoOnly);
 }
 function handleActionClick(event) {
   const target = event.target.closest('button,td.assignment'); if (!target) return;
