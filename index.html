@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wochen-Disposition</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js" defer></script>
+    <script src="script.js" defer></script>
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">MVP</p>
+        <h1>Wochen-Disposition</h1>
+      </div>
+      <nav class="main-nav" aria-label="Hauptnavigation">
+        <button class="nav-button active" data-page="employees">Mitarbeiter</button>
+        <button class="nav-button" data-page="works">Arbeiten</button>
+        <button class="nav-button" data-page="disposition">Disposition</button>
+        <button class="nav-button" data-page="settings">Einstellungen</button>
+      </nav>
+    </header>
+
+    <main class="app-shell">
+      <section id="employees" class="page active" aria-labelledby="employees-title">
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">Stammdaten</p>
+            <h2 id="employees-title">Mitarbeiter</h2>
+          </div>
+        </div>
+        <form id="employee-form" class="card form-grid">
+          <input type="hidden" id="employee-id" />
+          <label>Vorname *<input id="employee-first-name" required autocomplete="given-name" /></label>
+          <label>Nachname<input id="employee-last-name" autocomplete="family-name" /></label>
+          <label>Stundenansatz CHF / h<input id="employee-hourly-rate" type="number" min="0" step="0.05" placeholder="0.00" /></label>
+          <div class="form-actions"><button type="submit">Mitarbeiter speichern</button><button type="button" class="secondary" id="employee-reset">Zurücksetzen</button></div>
+        </form>
+        <div id="employee-list" class="card-list"></div>
+      </section>
+
+      <section id="works" class="page" aria-labelledby="works-title">
+        <div class="page-heading"><div><p class="eyebrow">Aufträge</p><h2 id="works-title">Arbeiten</h2></div></div>
+        <form id="work-form" class="card form-grid">
+          <input type="hidden" id="work-id" />
+          <label>Titel *<input id="work-title" required /></label>
+          <label>Zuordnung / Los *<select id="work-category" required></select></label>
+          <label class="full-width">Beschreibung<textarea id="work-description" rows="3"></textarea></label>
+          <div class="form-actions"><button type="submit">Arbeit speichern</button><button type="button" class="secondary" id="work-reset">Zurücksetzen</button></div>
+        </form>
+        <div id="work-list" class="card-list"></div>
+      </section>
+
+      <section id="disposition" class="page" aria-labelledby="disposition-title">
+        <div class="page-heading">
+          <div><p class="eyebrow">Wochenplan</p><h2 id="disposition-title">Disposition</h2><p id="week-label" class="muted"></p></div>
+          <button id="export-pdf">PDF exportieren</button>
+        </div>
+        <div id="disposition-empty" class="empty-state"></div>
+        <div class="table-wrap"><table id="disposition-table" class="matrix"></table></div>
+        <section id="cost-summary" class="summary-grid"></section>
+      </section>
+
+      <section id="settings" class="page" aria-labelledby="settings-title">
+        <div class="page-heading"><div><p class="eyebrow">Parameter</p><h2 id="settings-title">Einstellungen</h2></div></div>
+        <form id="settings-form" class="card form-grid">
+          <label>Kalenderwoche *<input id="settings-week" type="number" min="1" max="53" required /></label>
+          <label>Jahr *<input id="settings-year" type="number" min="2000" max="2100" required /></label>
+          <label>Arbeitsstunden pro Arbeitstag *<input id="settings-hours" type="number" min="0" step="0.25" required /></label>
+          <label>Spesen pro Arbeitstag CHF *<input id="settings-expenses" type="number" min="0" step="0.05" required /></label>
+          <div class="form-actions"><button type="submit">Einstellungen speichern</button></div>
+        </form>
+      </section>
+    </main>
+
+    <dialog id="assignment-dialog">
+      <form method="dialog" id="assignment-form" class="dialog-card">
+        <h3 id="assignment-title">Zuweisung bearbeiten</h3>
+        <label>Status<select id="assignment-status"><option value="empty">Leer</option><option value="absent">Abwesend</option><option value="assigned">Arbeit zuweisen</option></select></label>
+        <label id="assignment-work-label">Arbeit<select id="assignment-work"></select></label>
+        <menu><button value="cancel" class="secondary">Abbrechen</button><button id="assignment-save" value="default">Speichern</button></menu>
+      </form>
+    </dialog>
+  </body>
+</html>
