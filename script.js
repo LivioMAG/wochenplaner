@@ -68,10 +68,35 @@ function id(prefix) { return `${prefix}-${crypto.randomUUID ? crypto.randomUUID(
 function money(value) { return new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF' }).format(value || 0); }
 function getIsoWeek(date) { const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())); d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7)); const y = new Date(Date.UTC(d.getUTCFullYear(), 0, 1)); return Math.ceil((((d - y) / 86400000) + 1) / 7); }
 function getIsoWeekYear(date) { const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())); d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7)); return d.getUTCFullYear(); }
+function getIsoWeeksInYear(year) { return getIsoWeek(new Date(Date.UTC(year, 11, 28))); }
+function getNormalizedWeekSettings(year, week) {
+  let nextYear = Number(year);
+  let nextWeek = Number(week);
+  while (nextWeek < 1) {
+    nextYear -= 1;
+    nextWeek += getIsoWeeksInYear(nextYear);
+  }
+  while (nextWeek > getIsoWeeksInYear(nextYear)) {
+    nextWeek -= getIsoWeeksInYear(nextYear);
+    nextYear += 1;
+  }
+  return { year: nextYear, calendarWeek: nextWeek };
+}
 function getWeekDates(year, week) { const jan4 = new Date(Date.UTC(year, 0, 4)); const monday = new Date(jan4); monday.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() || 7) - 1) + (week - 1) * 7); return WEEKDAYS.map((day, index) => { const date = new Date(monday); date.setUTCDate(monday.getUTCDate() + index); return { key: day[0], label: day[1], date }; }); }
 function formatDate(date) { return new Intl.DateTimeFormat('de-CH', { day: '2-digit', month: '2-digit' }).format(date); }
 function formatDateWithYear(date) { return new Intl.DateTimeFormat('de-CH', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(date); }
 function getWeekRangeLabel() { const days = getWeekDates(state.settings.year, state.settings.calendarWeek); return `${formatDateWithYear(days[0].date)} bis ${formatDateWithYear(days[days.length - 1].date)}`; }
+function getActiveWeekLabel() { return `KW ${state.settings.calendarWeek} / ${state.settings.year} · ${getWeekRangeLabel()}`; }
+function changeCalendarWeek(offset) {
+  const nextWeek = getNormalizedWeekSettings(state.settings.year, state.settings.calendarWeek + offset);
+  state.settings = { ...state.settings, ...nextWeek };
+  saveState();
+}
+function setCurrentCalendarWeek() {
+  const now = new Date();
+  state.settings = { ...state.settings, calendarWeek: getIsoWeek(now), year: getIsoWeekYear(now) };
+  saveState();
+}
 function employeeName(employee) { return `${employee?.firstName || ''} ${employee?.lastName || ''}`.trim(); }
 function getEmployeeById(employeeId) { return state.employees.find((employee) => employee.id === employeeId); }
 function getWorkById(workId) { return state.works.find((work) => work.id === workId); }
@@ -126,7 +151,7 @@ function renderCarpools() {
   driverSelect.innerHTML = vehicleEmployees.map((employee) => `<option value="${employee.id}">${escapeHtml(employeeName(employee))} (${Number(employee.vehicleSeats) || 1} Plätze)</option>`).join('');
   passengersSelect.innerHTML = state.employees.map((employee) => `<option value="${employee.id}">${escapeHtml(employeeName(employee))}</option>`).join('');
   workSelect.innerHTML = state.works.map((work) => `<option value="${work.id}">${escapeHtml(work.title)}</option>`).join('');
-  document.querySelector('#carpool-week-label').textContent = `KW ${state.settings.calendarWeek} / ${state.settings.year} · ${getWeekRangeLabel()}`;
+  document.querySelector('#carpool-week-label').textContent = getActiveWeekLabel();
   const empty = document.querySelector('#carpool-empty');
   empty.hidden = !!(state.employees.length && vehicleEmployees.length && state.works.length);
   empty.textContent = !state.employees.length ? 'Bitte zuerst Mitarbeiter erfassen.' : (!vehicleEmployees.length ? 'Bitte mindestens ein Fahrzeug bei einem Mitarbeiter hinterlegen.' : (!state.works.length ? 'Bitte zuerst Arbeiten erfassen.' : ''));
@@ -143,7 +168,7 @@ function renderCarpoolCard(carpool) {
   return `<article class="item-card"><span class="badge">${day ? `${day.label} ${formatDate(day.date)}` : carpool.weekday}</span><h3>${escapeHtml(work?.title || 'Baustelle nicht gefunden')}</h3><p><strong>Fahrer:</strong> ${escapeHtml(employeeName(driver))}</p><p><strong>Mitfahrer:</strong> ${passengers.length ? escapeHtml(passengers.join(', ')) : 'Keine'}</p><p><strong>Auf Baustelle:</strong> ${escapeHtml(carpool.arrivalTime || 'ohne Zeit')}</p><div class="item-actions"><button data-edit-carpool="${carpool.id}">Bearbeiten</button><button class="danger" data-delete-carpool="${carpool.id}">Löschen</button></div></article>`;
 }
 function renderDisposition() {
-  document.querySelector('#week-label').textContent = `KW ${state.settings.calendarWeek} / ${state.settings.year}`;
+  document.querySelector('#week-label').textContent = getActiveWeekLabel();
   const empty = document.querySelector('#disposition-empty');
   empty.hidden = state.employees.length && state.works.length;
   empty.textContent = !state.employees.length ? 'Bitte zuerst Mitarbeiter erfassen.' : (!state.works.length ? 'Bitte zuerst Arbeiten erfassen.' : '');
@@ -299,12 +324,15 @@ function bindEvents() {
   document.querySelector('#import-backup').addEventListener('change', (event) => { importBackup(event.target.files[0]); event.target.value = ''; });
   document.querySelector('#carpool-form').addEventListener('submit', (event) => { event.preventDefault(); const driverId = document.querySelector('#carpool-driver').value; const passengerIds = Array.from(document.querySelector('#carpool-passengers').selectedOptions).map((option) => option.value).filter((employeeId) => employeeId !== driverId); const driver = getEmployeeById(driverId); const seats = Number(driver?.vehicleSeats) || 1; if (passengerIds.length + 1 > seats) { alert(`Dieses Fahrzeug hat nur ${seats} Plätze.`); return; } const carpool = { id: document.querySelector('#carpool-id').value || id('carpool'), calendarWeek: state.settings.calendarWeek, year: state.settings.year, weekday: document.querySelector('#carpool-day').value, driverId, passengerIds, workId: document.querySelector('#carpool-work').value, arrivalTime: document.querySelector('#carpool-arrival-time').value }; if (!carpool.weekday || !carpool.driverId || !carpool.workId || !carpool.arrivalTime) return; state.carpools = (state.carpools || []).filter((item) => item.id !== carpool.id).concat(carpool); event.target.reset(); document.querySelector('#carpool-id').value = ''; saveState(); });
   document.querySelector('#carpool-reset').addEventListener('click', () => { document.querySelector('#carpool-form').reset(); document.querySelector('#carpool-id').value = ''; });
-  document.querySelector('#settings-form').addEventListener('submit', (event) => { event.preventDefault(); const settings = { calendarWeek: Number(document.querySelector('#settings-week').value), year: Number(document.querySelector('#settings-year').value), workHoursPerDay: Number(document.querySelector('#settings-hours').value), expensesPerWorkdayChf: Number(document.querySelector('#settings-expenses').value) }; if (settings.calendarWeek < 1 || settings.calendarWeek > 53 || settings.workHoursPerDay < 0 || settings.expensesPerWorkdayChf < 0) return; state.settings = settings; saveState(); });
+  document.querySelector('#settings-form').addEventListener('submit', (event) => { event.preventDefault(); const rawWeek = Number(document.querySelector('#settings-week').value); const rawYear = Number(document.querySelector('#settings-year').value); const normalizedWeek = getNormalizedWeekSettings(rawYear, rawWeek); const settings = { calendarWeek: normalizedWeek.calendarWeek, year: normalizedWeek.year, workHoursPerDay: Number(document.querySelector('#settings-hours').value), expensesPerWorkdayChf: Number(document.querySelector('#settings-expenses').value) }; if (rawWeek < 1 || rawWeek > 53 || rawYear < 2000 || rawYear > 2100 || settings.workHoursPerDay < 0 || settings.expensesPerWorkdayChf < 0) return; state.settings = settings; saveState(); });
   document.body.addEventListener('click', (event) => handleActionClick(event));
   document.querySelector('#assignment-status').addEventListener('change', () => document.querySelector('#assignment-work-label').hidden = document.querySelector('#assignment-status').value !== 'assigned');
   document.querySelector('#assignment-save').addEventListener('click', (event) => { event.preventDefault(); if (!activeAssignment) return; const status = document.querySelector('#assignment-status').value; const workId = document.querySelector('#assignment-work').value; if (status === 'assigned' && !workId) return; upsertAssignment(activeAssignment.employeeId, activeAssignment.weekday, status, workId); document.querySelector('#assignment-dialog').close(); });
   document.querySelector('#export-pdf-full').addEventListener('click', exportPdfFull);
   document.querySelector('#export-pdf-dispo').addEventListener('click', exportPdfDispoOnly);
+  document.querySelector('#previous-week').addEventListener('click', () => changeCalendarWeek(-1));
+  document.querySelector('#current-week').addEventListener('click', setCurrentCalendarWeek);
+  document.querySelector('#next-week').addEventListener('click', () => changeCalendarWeek(1));
 }
 function handleActionClick(event) {
   const target = event.target.closest('button,td.assignment'); if (!target) return;
