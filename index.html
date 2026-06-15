@@ -20,6 +20,7 @@
         <button class="nav-button active" data-page="employees">Mitarbeiter</button>
         <button class="nav-button" data-page="works">Arbeiten</button>
         <button class="nav-button" data-page="disposition">Disposition</button>
+        <button class="nav-button" data-page="carpools">Fahrgemeinschaften</button>
         <button class="nav-button" data-page="settings">Einstellungen</button>
       </nav>
     </header>
@@ -37,6 +38,8 @@
           <label>Vorname *<input id="employee-first-name" required autocomplete="given-name" /></label>
           <label>Nachname<input id="employee-last-name" autocomplete="family-name" /></label>
           <label>Stundenansatz CHF / h<input id="employee-hourly-rate" type="number" min="0" step="0.05" placeholder="0.00" /></label>
+          <label class="checkbox-label"><input id="employee-has-vehicle" type="checkbox" /> Mitarbeiter hat Fahrzeug</label>
+          <label>Plätze im Fahrzeug<input id="employee-vehicle-seats" type="number" min="1" step="1" placeholder="z. B. 4" /></label>
           <div class="form-actions"><button type="submit">Mitarbeiter speichern</button><button type="button" class="secondary" id="employee-reset">Zurücksetzen</button></div>
         </form>
         <div id="employee-list" class="card-list"></div>
@@ -62,6 +65,23 @@
         <div id="disposition-empty" class="empty-state"></div>
         <div class="table-wrap"><table id="disposition-table" class="matrix"></table></div>
         <section id="cost-summary" class="summary-grid"></section>
+      </section>
+
+      <section id="carpools" class="page" aria-labelledby="carpools-title">
+        <div class="page-heading">
+          <div><p class="eyebrow">Fahrgemeinschaften</p><h2 id="carpools-title">Fahrgemeinschaften planen</h2><p id="carpool-week-label" class="muted"></p></div>
+        </div>
+        <div id="carpool-empty" class="empty-state"></div>
+        <form id="carpool-form" class="card form-grid">
+          <input type="hidden" id="carpool-id" />
+          <label>Tag *<select id="carpool-day" required></select></label>
+          <label>Fahrer / Fahrzeug *<select id="carpool-driver" required></select></label>
+          <label>Baustelle *<select id="carpool-work" required></select></label>
+          <label>Auf Baustelle um *<input id="carpool-arrival-time" type="time" required /></label>
+          <label class="full-width">Mitfahrer<select id="carpool-passengers" multiple size="6"></select></label>
+          <div class="form-actions"><button type="submit">Fahrgemeinschaft speichern</button><button type="button" class="secondary" id="carpool-reset">Zurücksetzen</button></div>
+        </form>
+        <div id="carpool-list" class="card-list"></div>
       </section>
 
       <section id="settings" class="page" aria-labelledby="settings-title">

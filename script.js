@@ -15,7 +15,7 @@ const defaultSettings = () => {
 let state = createFallbackState();
 let activeAssignment = null;
 
-function createFallbackState() { return { employees: [], works: [], assignments: [], settings: defaultSettings() }; }
+function createFallbackState() { return { employees: [], works: [], assignments: [], carpools: [], settings: defaultSettings() }; }
 function openDatabase() {
   return new Promise((resolve, reject) => {
     if (!('indexedDB' in window)) { reject(new Error('IndexedDB nicht verfügbar')); return; }
@@ -70,6 +70,12 @@ function getIsoWeek(date) { const d = new Date(Date.UTC(date.getFullYear(), date
 function getIsoWeekYear(date) { const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())); d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7)); return d.getUTCFullYear(); }
 function getWeekDates(year, week) { const jan4 = new Date(Date.UTC(year, 0, 4)); const monday = new Date(jan4); monday.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() || 7) - 1) + (week - 1) * 7); return WEEKDAYS.map((day, index) => { const date = new Date(monday); date.setUTCDate(monday.getUTCDate() + index); return { key: day[0], label: day[1], date }; }); }
 function formatDate(date) { return new Intl.DateTimeFormat('de-CH', { day: '2-digit', month: '2-digit' }).format(date); }
+function formatDateWithYear(date) { return new Intl.DateTimeFormat('de-CH', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(date); }
+function getWeekRangeLabel() { const days = getWeekDates(state.settings.year, state.settings.calendarWeek); return `${formatDateWithYear(days[0].date)} bis ${formatDateWithYear(days[days.length - 1].date)}`; }
+function employeeName(employee) { return `${employee?.firstName || ''} ${employee?.lastName || ''}`.trim(); }
+function getEmployeeById(employeeId) { return state.employees.find((employee) => employee.id === employeeId); }
+function getWorkById(workId) { return state.works.find((work) => work.id === workId); }
+function getWeekCarpools() { return (state.carpools || []).filter((carpool) => carpool.calendarWeek === state.settings.calendarWeek && carpool.year === state.settings.year); }
 function assignmentKey(employeeId, weekday) { return `${state.settings.year}-${state.settings.calendarWeek}-${employeeId}-${weekday}`; }
 function findAssignment(employeeId, weekday) { return state.assignments.find((a) => a.id === assignmentKey(employeeId, weekday)); }
 function upsertAssignment(employeeId, weekday, status, workId) {
@@ -97,10 +103,10 @@ function calculateCosts() {
   return result;
 }
 
-function renderAll() { renderEmployees(); renderWorks(); renderSettings(); renderDisposition(); }
+function renderAll() { renderEmployees(); renderWorks(); renderSettings(); renderDisposition(); renderCarpools(); }
 function renderEmployees() {
   const list = document.querySelector('#employee-list');
-  list.innerHTML = state.employees.length ? state.employees.map((e) => `<article class="item-card"><h3>${escapeHtml(`${e.firstName} ${e.lastName || ''}`.trim())}</h3><p>${money(e.hourlyRateChf)} / h</p><div class="item-actions"><button data-edit-employee="${e.id}">Bearbeiten</button><button class="danger" data-delete-employee="${e.id}">Löschen</button></div></article>`).join('') : '<div class="empty-state">Noch keine Mitarbeiter erfasst.</div>';
+  list.innerHTML = state.employees.length ? state.employees.map((e) => `<article class="item-card"><h3>${escapeHtml(employeeName(e))}</h3><p>${money(e.hourlyRateChf)} / h</p><p class="muted">${e.hasVehicle ? `Fahrzeug · ${Number(e.vehicleSeats) || 1} Plätze` : 'Kein Fahrzeug hinterlegt'}</p><div class="item-actions"><button data-edit-employee="${e.id}">Bearbeiten</button><button class="danger" data-delete-employee="${e.id}">Löschen</button></div></article>`).join('') : '<div class="empty-state">Noch keine Mitarbeiter erfasst.</div>';
 }
 function renderWorks() {
   document.querySelector('#work-category').innerHTML = Object.entries(CATEGORIES).map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
@@ -108,6 +114,34 @@ function renderWorks() {
   list.innerHTML = state.works.length ? state.works.map((w) => `<article class="item-card"><span class="badge">${CATEGORIES[w.category]}</span><h3>${escapeHtml(w.title)}</h3><p>${escapeHtml(w.description || 'Keine Beschreibung')}</p><div class="item-actions"><button data-edit-work="${w.id}">Bearbeiten</button><button class="danger" data-delete-work="${w.id}">Löschen</button></div></article>`).join('') : '<div class="empty-state">Noch keine Arbeiten erfasst.</div>';
 }
 function renderSettings() { document.querySelector('#settings-week').value = state.settings.calendarWeek; document.querySelector('#settings-year').value = state.settings.year; document.querySelector('#settings-hours').value = state.settings.workHoursPerDay; document.querySelector('#settings-expenses').value = state.settings.expensesPerWorkdayChf; }
+function renderCarpools() {
+  const daySelect = document.querySelector('#carpool-day');
+  const driverSelect = document.querySelector('#carpool-driver');
+  const passengersSelect = document.querySelector('#carpool-passengers');
+  const workSelect = document.querySelector('#carpool-work');
+  if (!daySelect || !driverSelect || !passengersSelect || !workSelect) return;
+  const days = getWeekDates(state.settings.year, state.settings.calendarWeek);
+  daySelect.innerHTML = days.map((day) => `<option value="${day.key}">${day.label} · ${formatDate(day.date)}</option>`).join('');
+  const vehicleEmployees = state.employees.filter((employee) => employee.hasVehicle);
+  driverSelect.innerHTML = vehicleEmployees.map((employee) => `<option value="${employee.id}">${escapeHtml(employeeName(employee))} (${Number(employee.vehicleSeats) || 1} Plätze)</option>`).join('');
+  passengersSelect.innerHTML = state.employees.map((employee) => `<option value="${employee.id}">${escapeHtml(employeeName(employee))}</option>`).join('');
+  workSelect.innerHTML = state.works.map((work) => `<option value="${work.id}">${escapeHtml(work.title)}</option>`).join('');
+  document.querySelector('#carpool-week-label').textContent = `KW ${state.settings.calendarWeek} / ${state.settings.year} · ${getWeekRangeLabel()}`;
+  const empty = document.querySelector('#carpool-empty');
+  empty.hidden = !!(state.employees.length && vehicleEmployees.length && state.works.length);
+  empty.textContent = !state.employees.length ? 'Bitte zuerst Mitarbeiter erfassen.' : (!vehicleEmployees.length ? 'Bitte mindestens ein Fahrzeug bei einem Mitarbeiter hinterlegen.' : (!state.works.length ? 'Bitte zuerst Arbeiten erfassen.' : ''));
+  document.querySelector('#carpool-form').hidden = !empty.hidden;
+  const list = document.querySelector('#carpool-list');
+  const carpools = getWeekCarpools();
+  list.innerHTML = carpools.length ? carpools.map(renderCarpoolCard).join('') : '<div class="empty-state">Noch keine Fahrgemeinschaften für diese Woche erfasst.</div>';
+}
+function renderCarpoolCard(carpool) {
+  const day = getWeekDates(carpool.year, carpool.calendarWeek).find((item) => item.key === carpool.weekday);
+  const driver = getEmployeeById(carpool.driverId);
+  const work = getWorkById(carpool.workId);
+  const passengers = (carpool.passengerIds || []).map(getEmployeeById).filter(Boolean).map(employeeName);
+  return `<article class="item-card"><span class="badge">${day ? `${day.label} ${formatDate(day.date)}` : carpool.weekday}</span><h3>${escapeHtml(work?.title || 'Baustelle nicht gefunden')}</h3><p><strong>Fahrer:</strong> ${escapeHtml(employeeName(driver))}</p><p><strong>Mitfahrer:</strong> ${passengers.length ? escapeHtml(passengers.join(', ')) : 'Keine'}</p><p><strong>Auf Baustelle:</strong> ${escapeHtml(carpool.arrivalTime || 'ohne Zeit')}</p><div class="item-actions"><button data-edit-carpool="${carpool.id}">Bearbeiten</button><button class="danger" data-delete-carpool="${carpool.id}">Löschen</button></div></article>`;
+}
 function renderDisposition() {
   document.querySelector('#week-label').textContent = `KW ${state.settings.calendarWeek} / ${state.settings.year}`;
   const empty = document.querySelector('#disposition-empty');
@@ -144,6 +178,7 @@ function normalizeImportedState(imported) {
     employees: Array.isArray(imported.employees) ? imported.employees : [],
     works: Array.isArray(imported.works) ? imported.works : [],
     assignments: Array.isArray(imported.assignments) ? imported.assignments : [],
+    carpools: Array.isArray(imported.carpools) ? imported.carpools : [],
     settings: { ...defaultSettings(), ...(imported.settings || {}) },
   };
 }
@@ -195,30 +230,38 @@ function exportPdfFull() {
   doc.autoTable({ startY: doc.lastAutoTable.finalY + 10, head: [['Los / Zuordnung', 'Kosten']], body: Object.entries(CATEGORIES).map(([key, label]) => [label, money(costs.byCategory[key])]), headStyles: { fillColor: [37, 99, 235] } });
   doc.save(`Disposition-mit-Kosten-KW-${state.settings.calendarWeek}-${state.settings.year}.pdf`);
 }
+function getCarpoolPdfBody() {
+  const days = getWeekDates(state.settings.year, state.settings.calendarWeek);
+  return getWeekCarpools().map((carpool) => {
+    const day = days.find((item) => item.key === carpool.weekday);
+    const driver = getEmployeeById(carpool.driverId);
+    const passengers = (carpool.passengerIds || []).map(getEmployeeById).filter(Boolean).map(employeeName);
+    const work = getWorkById(carpool.workId);
+    return [
+      day ? `${day.label} ${formatDate(day.date)}` : carpool.weekday,
+      employeeName(driver),
+      passengers.join(', ') || '-',
+      work?.title || '-',
+      carpool.arrivalTime || '-',
+    ];
+  });
+}
 function exportPdfDispoOnly() {
   const jspdf = window.jspdf?.jsPDF; if (!jspdf) { alert('PDF-Bibliothek konnte nicht geladen werden.'); return; }
   const doc = new jspdf({ orientation: 'landscape' }); const days = getWeekDates(state.settings.year, state.settings.calendarWeek);
-  doc.setFillColor(239, 246, 255);
-  doc.rect(0, 0, 297, 210, 'F');
-  doc.setFillColor(15, 23, 42);
-  doc.roundedRect(10, 10, 277, 30, 5, 5, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(22);
-  doc.text('Dispo', 18, 25);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(11);
-  doc.text(`KW ${state.settings.calendarWeek} / ${state.settings.year} · kompakter Plan ohne Kosten und ohne Los-Zuordnung`, 18, 33);
   doc.setTextColor(24, 32, 47);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.text(`KW ${state.settings.calendarWeek} / ${state.settings.year} · ${getWeekRangeLabel()}`, 10, 10);
   doc.autoTable({
-    startY: 50,
+    startY: 16,
     margin: { left: 10, right: 10 },
     head: [['Team', ...days.map((d) => `${d.label}\n${formatDate(d.date)}`)]],
     body: getDispositionPdfBody(false),
     styles: { cellPadding: 5, fontSize: 10, lineColor: [226, 232, 240], lineWidth: 0.2, valign: 'middle' },
     headStyles: { fillColor: [37, 99, 235], textColor: [255, 255, 255], fontStyle: 'bold', halign: 'center' },
     bodyStyles: { minCellHeight: 16 },
-    alternateRowStyles: { fillColor: [255, 255, 255] },
+    alternateRowStyles: { fillColor: [248, 250, 252] },
     columnStyles: { 0: { fillColor: [248, 250, 252], fontStyle: 'bold', cellWidth: 36 } },
     didParseCell(data) {
       if (data.section === 'body' && data.column.index > 0 && data.cell.raw === 'Abwesend') {
@@ -232,20 +275,30 @@ function exportPdfDispoOnly() {
       }
     },
   });
-  doc.setFontSize(8);
-  doc.setTextColor(100, 116, 139);
-  doc.text('Export: Nur Dispo · Aufgaben werden bewusst nur als kurzer Titel angezeigt.', 10, 202);
+  const carpoolBody = getCarpoolPdfBody();
+  if (carpoolBody.length) {
+    doc.autoTable({
+      startY: doc.lastAutoTable.finalY + 8,
+      margin: { left: 10, right: 10 },
+      head: [['Tag', 'Fahrer', 'Mitfahrer', 'Baustelle', 'Auf Baustelle um']],
+      body: carpoolBody,
+      styles: { cellPadding: 3, fontSize: 9, lineColor: [226, 232, 240], lineWidth: 0.2 },
+      headStyles: { fillColor: [17, 24, 39], textColor: [255, 255, 255], fontStyle: 'bold' },
+    });
+  }
   doc.save(`Nur-Dispo-KW-${state.settings.calendarWeek}-${state.settings.year}.pdf`);
 }
 
 function bindEvents() {
   document.querySelectorAll('.nav-button').forEach((button) => button.addEventListener('click', () => { document.querySelectorAll('.nav-button,.page').forEach((el) => el.classList.remove('active')); button.classList.add('active'); document.querySelector(`#${button.dataset.page}`).classList.add('active'); }));
-  document.querySelector('#employee-form').addEventListener('submit', (event) => { event.preventDefault(); const employee = { id: document.querySelector('#employee-id').value || id('emp'), firstName: document.querySelector('#employee-first-name').value.trim(), lastName: document.querySelector('#employee-last-name').value.trim() || undefined, hourlyRateChf: Number(document.querySelector('#employee-hourly-rate').value) || 0 }; if (!employee.firstName || employee.hourlyRateChf < 0) return; state.employees = state.employees.filter((e) => e.id !== employee.id).concat(employee); event.target.reset(); document.querySelector('#employee-id').value = ''; saveState(); });
-  document.querySelector('#employee-reset').addEventListener('click', () => { document.querySelector('#employee-form').reset(); document.querySelector('#employee-id').value = ''; });
+  document.querySelector('#employee-form').addEventListener('submit', (event) => { event.preventDefault(); const employee = { id: document.querySelector('#employee-id').value || id('emp'), firstName: document.querySelector('#employee-first-name').value.trim(), lastName: document.querySelector('#employee-last-name').value.trim() || undefined, hourlyRateChf: Number(document.querySelector('#employee-hourly-rate').value) || 0, hasVehicle: document.querySelector('#employee-has-vehicle').checked, vehicleSeats: Number(document.querySelector('#employee-vehicle-seats').value) || 1 }; if (!employee.firstName || employee.hourlyRateChf < 0 || employee.vehicleSeats < 1) return; state.employees = state.employees.filter((e) => e.id !== employee.id).concat(employee); event.target.reset(); document.querySelector('#employee-id').value = ''; saveState(); });
+  document.querySelector('#employee-reset').addEventListener('click', () => { document.querySelector('#employee-form').reset(); document.querySelector('#employee-id').value = ''; document.querySelector('#employee-has-vehicle').checked = false; document.querySelector('#employee-vehicle-seats').value = ''; });
   document.querySelector('#work-form').addEventListener('submit', (event) => { event.preventDefault(); const work = { id: document.querySelector('#work-id').value || id('work'), title: document.querySelector('#work-title').value.trim(), description: document.querySelector('#work-description').value.trim() || undefined, category: document.querySelector('#work-category').value }; if (!work.title || !CATEGORIES[work.category]) return; state.works = state.works.filter((w) => w.id !== work.id).concat(work); event.target.reset(); document.querySelector('#work-id').value = ''; saveState(); });
   document.querySelector('#work-reset').addEventListener('click', () => { document.querySelector('#work-form').reset(); document.querySelector('#work-id').value = ''; });
   document.querySelector('#export-backup').addEventListener('click', exportBackup);
   document.querySelector('#import-backup').addEventListener('change', (event) => { importBackup(event.target.files[0]); event.target.value = ''; });
+  document.querySelector('#carpool-form').addEventListener('submit', (event) => { event.preventDefault(); const driverId = document.querySelector('#carpool-driver').value; const passengerIds = Array.from(document.querySelector('#carpool-passengers').selectedOptions).map((option) => option.value).filter((employeeId) => employeeId !== driverId); const driver = getEmployeeById(driverId); const seats = Number(driver?.vehicleSeats) || 1; if (passengerIds.length + 1 > seats) { alert(`Dieses Fahrzeug hat nur ${seats} Plätze.`); return; } const carpool = { id: document.querySelector('#carpool-id').value || id('carpool'), calendarWeek: state.settings.calendarWeek, year: state.settings.year, weekday: document.querySelector('#carpool-day').value, driverId, passengerIds, workId: document.querySelector('#carpool-work').value, arrivalTime: document.querySelector('#carpool-arrival-time').value }; if (!carpool.weekday || !carpool.driverId || !carpool.workId || !carpool.arrivalTime) return; state.carpools = (state.carpools || []).filter((item) => item.id !== carpool.id).concat(carpool); event.target.reset(); document.querySelector('#carpool-id').value = ''; saveState(); });
+  document.querySelector('#carpool-reset').addEventListener('click', () => { document.querySelector('#carpool-form').reset(); document.querySelector('#carpool-id').value = ''; });
   document.querySelector('#settings-form').addEventListener('submit', (event) => { event.preventDefault(); const settings = { calendarWeek: Number(document.querySelector('#settings-week').value), year: Number(document.querySelector('#settings-year').value), workHoursPerDay: Number(document.querySelector('#settings-hours').value), expensesPerWorkdayChf: Number(document.querySelector('#settings-expenses').value) }; if (settings.calendarWeek < 1 || settings.calendarWeek > 53 || settings.workHoursPerDay < 0 || settings.expensesPerWorkdayChf < 0) return; state.settings = settings; saveState(); });
   document.body.addEventListener('click', (event) => handleActionClick(event));
   document.querySelector('#assignment-status').addEventListener('change', () => document.querySelector('#assignment-work-label').hidden = document.querySelector('#assignment-status').value !== 'assigned');
@@ -255,10 +308,12 @@ function bindEvents() {
 }
 function handleActionClick(event) {
   const target = event.target.closest('button,td.assignment'); if (!target) return;
-  if (target.dataset.editEmployee) { const e = state.employees.find((item) => item.id === target.dataset.editEmployee); document.querySelector('#employee-id').value = e.id; document.querySelector('#employee-first-name').value = e.firstName; document.querySelector('#employee-last-name').value = e.lastName || ''; document.querySelector('#employee-hourly-rate').value = e.hourlyRateChf || ''; }
-  if (target.dataset.deleteEmployee && confirm('Mitarbeiter löschen?')) { state.employees = state.employees.filter((e) => e.id !== target.dataset.deleteEmployee); state.assignments = state.assignments.filter((a) => a.employeeId !== target.dataset.deleteEmployee); saveState(); }
+  if (target.dataset.editEmployee) { const e = state.employees.find((item) => item.id === target.dataset.editEmployee); document.querySelector('#employee-id').value = e.id; document.querySelector('#employee-first-name').value = e.firstName; document.querySelector('#employee-last-name').value = e.lastName || ''; document.querySelector('#employee-hourly-rate').value = e.hourlyRateChf || ''; document.querySelector('#employee-has-vehicle').checked = !!e.hasVehicle; document.querySelector('#employee-vehicle-seats').value = e.vehicleSeats || ''; }
+  if (target.dataset.deleteEmployee && confirm('Mitarbeiter löschen?')) { state.employees = state.employees.filter((e) => e.id !== target.dataset.deleteEmployee); state.assignments = state.assignments.filter((a) => a.employeeId !== target.dataset.deleteEmployee); state.carpools = (state.carpools || []).filter((carpool) => carpool.driverId !== target.dataset.deleteEmployee && !(carpool.passengerIds || []).includes(target.dataset.deleteEmployee)); saveState(); }
   if (target.dataset.editWork) { const w = state.works.find((item) => item.id === target.dataset.editWork); document.querySelector('#work-id').value = w.id; document.querySelector('#work-title').value = w.title; document.querySelector('#work-description').value = w.description || ''; document.querySelector('#work-category').value = w.category; }
-  if (target.dataset.deleteWork && confirm('Arbeit löschen?')) { state.works = state.works.filter((w) => w.id !== target.dataset.deleteWork); state.assignments = state.assignments.map((a) => a.workId === target.dataset.deleteWork ? { ...a, status: 'empty', workId: undefined } : a).filter((a) => a.status !== 'empty'); saveState(); }
+  if (target.dataset.deleteWork && confirm('Arbeit löschen?')) { state.works = state.works.filter((w) => w.id !== target.dataset.deleteWork); state.assignments = state.assignments.map((a) => a.workId === target.dataset.deleteWork ? { ...a, status: 'empty', workId: undefined } : a).filter((a) => a.status !== 'empty'); state.carpools = (state.carpools || []).filter((carpool) => carpool.workId !== target.dataset.deleteWork); saveState(); }
+  if (target.dataset.editCarpool) openCarpoolForEdit(target.dataset.editCarpool);
+  if (target.dataset.deleteCarpool && confirm('Fahrgemeinschaft löschen?')) { state.carpools = (state.carpools || []).filter((carpool) => carpool.id !== target.dataset.deleteCarpool); saveState(); }
   if (target.matches('td.assignment')) openAssignmentDialog(target.dataset.employee, target.dataset.weekday);
 }
 function openAssignmentDialog(employeeId, weekday) { activeAssignment = { employeeId, weekday }; const a = findAssignment(employeeId, weekday); document.querySelector('#assignment-status').value = a?.status || 'empty'; document.querySelector('#assignment-work').innerHTML = state.works.map((w) => `<option value="${w.id}">${escapeHtml(w.title)} - ${CATEGORIES[w.category]}</option>`).join(''); document.querySelector('#assignment-work').value = a?.workId || state.works[0]?.id || ''; document.querySelector('#assignment-work-label').hidden = document.querySelector('#assignment-status').value !== 'assigned'; document.querySelector('#assignment-dialog').showModal(); }
@@ -271,3 +326,5 @@ async function initApp() {
 }
 
 initApp();
+
+function openCarpoolForEdit(carpoolId) { const carpool = (state.carpools || []).find((item) => item.id === carpoolId); if (!carpool) return; document.querySelector('#carpool-id').value = carpool.id; document.querySelector('#carpool-day').value = carpool.weekday; document.querySelector('#carpool-driver').value = carpool.driverId; document.querySelector('#carpool-work').value = carpool.workId; document.querySelector('#carpool-arrival-time').value = carpool.arrivalTime || ''; Array.from(document.querySelector('#carpool-passengers').options).forEach((option) => { option.selected = (carpool.passengerIds || []).includes(option.value); }); }
