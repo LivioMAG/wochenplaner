@@ -109,6 +109,74 @@ function upsertAssignment(employeeId, weekday, status, workId) {
   if (status !== 'empty') state.assignments.push({ id: key, calendarWeek: state.settings.calendarWeek, year: state.settings.year, employeeId, weekday, status, workId: status === 'assigned' ? workId : undefined });
   saveState();
 }
+
+function getWorkingEmployeeIdsForDay(weekday) {
+  return new Set(state.assignments.filter((assignment) => assignment.calendarWeek === state.settings.calendarWeek && assignment.year === state.settings.year && assignment.weekday === weekday && assignment.status === 'assigned').map((assignment) => assignment.employeeId));
+}
+function getCarpoolOccupantIdsForDay(weekday, excludeCarpoolId) {
+  const occupants = new Set();
+  getWeekCarpools().filter((carpool) => carpool.weekday === weekday && carpool.id !== excludeCarpoolId).forEach((carpool) => {
+    if (carpool.driverId) occupants.add(carpool.driverId);
+    (carpool.passengerIds || []).forEach((employeeId) => occupants.add(employeeId));
+  });
+  return occupants;
+}
+function getCarpoolFormSelection() {
+  return {
+    carpoolId: document.querySelector('#carpool-id')?.value || '',
+    weekday: document.querySelector('#carpool-day')?.value || getWeekDates(state.settings.year, state.settings.calendarWeek)[0]?.key,
+    driverId: document.querySelector('#carpool-driver')?.value || '',
+    passengerIds: Array.from(document.querySelector('#carpool-passengers')?.selectedOptions || []).map((option) => option.value),
+  };
+}
+function getCarpoolSeatCapacity(driverId) {
+  const driver = getEmployeeById(driverId);
+  return Math.max(1, Number(driver?.vehicleSeats) || 1);
+}
+function getAvailablePassengerSlots(driverId) { return Math.max(0, getCarpoolSeatCapacity(driverId) - 1); }
+function getWorkingEmployeesForDay(weekday) {
+  const workingIds = getWorkingEmployeeIdsForDay(weekday);
+  return state.employees.filter((employee) => workingIds.has(employee.id));
+}
+function getAvailableDriversForDay(weekday, carpoolId) {
+  const occupiedIds = getCarpoolOccupantIdsForDay(weekday, carpoolId);
+  return getWorkingEmployeesForDay(weekday).filter((employee) => employee.hasVehicle && !occupiedIds.has(employee.id));
+}
+function getAvailablePassengersForDay(weekday, driverId, carpoolId, currentPassengerIds = []) {
+  const occupiedIds = getCarpoolOccupantIdsForDay(weekday, carpoolId);
+  return getWorkingEmployeesForDay(weekday).filter((employee) => employee.id !== driverId && (!occupiedIds.has(employee.id) || currentPassengerIds.includes(employee.id)));
+}
+function renderWorkingEmployeesSummary(weekday) {
+  const summary = document.querySelector('#carpool-working-employees');
+  if (!summary) return;
+  const workingEmployees = getWorkingEmployeesForDay(weekday);
+  summary.innerHTML = workingEmployees.length ? `<strong>Arbeiten an diesem Tag:</strong><ul>${workingEmployees.map((employee) => `<li>${escapeHtml(employeeName(employee))}${employee.hasVehicle ? ` · Fahrzeug (${getCarpoolSeatCapacity(employee.id)} Plätze)` : ''}</li>`).join('')}</ul>` : '<strong>Arbeiten an diesem Tag:</strong><p class="muted">Für diesen Tag sind noch keine Mitarbeitenden in der Disposition eingeteilt.</p>';
+}
+function updateCarpoolFormOptions() {
+  const daySelect = document.querySelector('#carpool-day');
+  const driverSelect = document.querySelector('#carpool-driver');
+  const passengersSelect = document.querySelector('#carpool-passengers');
+  const seatInfo = document.querySelector('#carpool-seat-info');
+  if (!daySelect || !driverSelect || !passengersSelect || !seatInfo) return;
+  const selection = getCarpoolFormSelection();
+  const drivers = getAvailableDriversForDay(selection.weekday, selection.carpoolId);
+  if (selection.driverId && !drivers.some((driver) => driver.id === selection.driverId)) {
+    const currentDriver = getEmployeeById(selection.driverId);
+    if (currentDriver) drivers.unshift(currentDriver);
+  }
+  driverSelect.innerHTML = drivers.map((employee) => `<option value="${employee.id}">${escapeHtml(employeeName(employee))} (${getCarpoolSeatCapacity(employee.id)} Plätze)</option>`).join('');
+  if (drivers.some((driver) => driver.id === selection.driverId)) driverSelect.value = selection.driverId;
+  const driverId = driverSelect.value;
+  const maxPassengers = getAvailablePassengerSlots(driverId);
+  const passengers = getAvailablePassengersForDay(selection.weekday, driverId, selection.carpoolId, selection.passengerIds);
+  passengersSelect.innerHTML = passengers.map((employee) => `<option value="${employee.id}">${escapeHtml(employeeName(employee))}</option>`).join('');
+  Array.from(passengersSelect.options).forEach((option) => { option.selected = selection.passengerIds.includes(option.value); });
+  const selectedPassengers = Array.from(passengersSelect.selectedOptions);
+  selectedPassengers.slice(maxPassengers).forEach((option) => { option.selected = false; });
+  seatInfo.textContent = driverId ? `${maxPassengers} freie Mitfahrer-Plätze verfügbar.` : 'Bitte zuerst einen Fahrer mit Fahrzeug auswählen.';
+  renderWorkingEmployeesSummary(selection.weekday);
+}
+
 function calculateCosts() {
   const result = { wageTotal: 0, expensesTotal: 0, total: 0, byEmployee: [], byCategory: Object.fromEntries(Object.keys(CATEGORIES).map((key) => [key, 0])) };
   state.employees.forEach((employee) => {
@@ -147,15 +215,15 @@ function renderCarpools() {
   if (!daySelect || !driverSelect || !passengersSelect || !workSelect) return;
   const days = getWeekDates(state.settings.year, state.settings.calendarWeek);
   daySelect.innerHTML = days.map((day) => `<option value="${day.key}">${day.label} · ${formatDate(day.date)}</option>`).join('');
-  const vehicleEmployees = state.employees.filter((employee) => employee.hasVehicle);
-  driverSelect.innerHTML = vehicleEmployees.map((employee) => `<option value="${employee.id}">${escapeHtml(employeeName(employee))} (${Number(employee.vehicleSeats) || 1} Plätze)</option>`).join('');
-  passengersSelect.innerHTML = state.employees.map((employee) => `<option value="${employee.id}">${escapeHtml(employeeName(employee))}</option>`).join('');
   workSelect.innerHTML = state.works.map((work) => `<option value="${work.id}">${escapeHtml(work.title)}</option>`).join('');
   document.querySelector('#carpool-week-label').textContent = getActiveWeekLabel();
   const empty = document.querySelector('#carpool-empty');
-  empty.hidden = !!(state.employees.length && vehicleEmployees.length && state.works.length);
-  empty.textContent = !state.employees.length ? 'Bitte zuerst Mitarbeiter erfassen.' : (!vehicleEmployees.length ? 'Bitte mindestens ein Fahrzeug bei einem Mitarbeiter hinterlegen.' : (!state.works.length ? 'Bitte zuerst Arbeiten erfassen.' : ''));
+  const hasVehicles = state.employees.some((employee) => employee.hasVehicle);
+  const hasAssignedWork = state.assignments.some((assignment) => assignment.calendarWeek === state.settings.calendarWeek && assignment.year === state.settings.year && assignment.status === 'assigned');
+  empty.hidden = !!(state.employees.length && hasVehicles && state.works.length && hasAssignedWork);
+  empty.textContent = !state.employees.length ? 'Bitte zuerst Mitarbeiter erfassen.' : (!hasVehicles ? 'Bitte mindestens ein Fahrzeug bei einem Mitarbeiter hinterlegen.' : (!state.works.length ? 'Bitte zuerst Arbeiten erfassen.' : (!hasAssignedWork ? 'Bitte zuerst Mitarbeitende in der Disposition für diese Woche einteilen.' : '')));
   document.querySelector('#carpool-form').hidden = !empty.hidden;
+  if (empty.hidden) updateCarpoolFormOptions();
   const list = document.querySelector('#carpool-list');
   const carpools = getWeekCarpools();
   list.innerHTML = carpools.length ? carpools.map(renderCarpoolCard).join('') : '<div class="empty-state">Noch keine Fahrgemeinschaften für diese Woche erfasst.</div>';
@@ -322,8 +390,11 @@ function bindEvents() {
   document.querySelector('#work-reset').addEventListener('click', () => { document.querySelector('#work-form').reset(); document.querySelector('#work-id').value = ''; });
   document.querySelector('#export-backup').addEventListener('click', exportBackup);
   document.querySelector('#import-backup').addEventListener('change', (event) => { importBackup(event.target.files[0]); event.target.value = ''; });
-  document.querySelector('#carpool-form').addEventListener('submit', (event) => { event.preventDefault(); const driverId = document.querySelector('#carpool-driver').value; const passengerIds = Array.from(document.querySelector('#carpool-passengers').selectedOptions).map((option) => option.value).filter((employeeId) => employeeId !== driverId); const driver = getEmployeeById(driverId); const seats = Number(driver?.vehicleSeats) || 1; if (passengerIds.length + 1 > seats) { alert(`Dieses Fahrzeug hat nur ${seats} Plätze.`); return; } const carpool = { id: document.querySelector('#carpool-id').value || id('carpool'), calendarWeek: state.settings.calendarWeek, year: state.settings.year, weekday: document.querySelector('#carpool-day').value, driverId, passengerIds, workId: document.querySelector('#carpool-work').value, arrivalTime: document.querySelector('#carpool-arrival-time').value }; if (!carpool.weekday || !carpool.driverId || !carpool.workId || !carpool.arrivalTime) return; state.carpools = (state.carpools || []).filter((item) => item.id !== carpool.id).concat(carpool); event.target.reset(); document.querySelector('#carpool-id').value = ''; saveState(); });
-  document.querySelector('#carpool-reset').addEventListener('click', () => { document.querySelector('#carpool-form').reset(); document.querySelector('#carpool-id').value = ''; });
+  document.querySelector('#carpool-day').addEventListener('change', updateCarpoolFormOptions);
+  document.querySelector('#carpool-driver').addEventListener('change', updateCarpoolFormOptions);
+  document.querySelector('#carpool-passengers').addEventListener('change', () => { const selection = getCarpoolFormSelection(); const maxPassengers = getAvailablePassengerSlots(selection.driverId); const selected = Array.from(document.querySelector('#carpool-passengers').selectedOptions); if (selected.length > maxPassengers) { selected[selected.length - 1].selected = false; alert(`Dieses Fahrzeug hat nur ${maxPassengers} freie Mitfahrer-Plätze.`); } });
+  document.querySelector('#carpool-form').addEventListener('submit', (event) => { event.preventDefault(); const carpoolId = document.querySelector('#carpool-id').value || id('carpool'); const weekday = document.querySelector('#carpool-day').value; const driverId = document.querySelector('#carpool-driver').value; const passengerIds = Array.from(document.querySelector('#carpool-passengers').selectedOptions).map((option) => option.value).filter((employeeId) => employeeId !== driverId); const workingIds = getWorkingEmployeeIdsForDay(weekday); const occupiedIds = getCarpoolOccupantIdsForDay(weekday, carpoolId); const seats = getCarpoolSeatCapacity(driverId); if (!driverId) { alert('Bitte einen Fahrer mit Fahrzeug auswählen.'); return; } if (!workingIds.has(driverId) || passengerIds.some((employeeId) => !workingIds.has(employeeId))) { alert('Es können nur Mitarbeitende ausgewählt werden, die an diesem Tag arbeiten.'); return; } if (occupiedIds.has(driverId) || passengerIds.some((employeeId) => occupiedIds.has(employeeId))) { alert('Mindestens eine ausgewählte Person hat an diesem Tag bereits eine Fahrgemeinschaft.'); return; } if (passengerIds.length + 1 > seats) { alert(`Dieses Fahrzeug hat nur ${seats} Plätze.`); return; } const carpool = { id: carpoolId, calendarWeek: state.settings.calendarWeek, year: state.settings.year, weekday, driverId, passengerIds, workId: document.querySelector('#carpool-work').value, arrivalTime: document.querySelector('#carpool-arrival-time').value }; if (!carpool.weekday || !carpool.driverId || !carpool.workId || !carpool.arrivalTime) return; state.carpools = (state.carpools || []).filter((item) => item.id !== carpool.id).concat(carpool); event.target.reset(); document.querySelector('#carpool-id').value = ''; saveState(); });
+  document.querySelector('#carpool-reset').addEventListener('click', () => { document.querySelector('#carpool-form').reset(); document.querySelector('#carpool-id').value = ''; updateCarpoolFormOptions(); });
   document.querySelector('#settings-form').addEventListener('submit', (event) => { event.preventDefault(); const rawWeek = Number(document.querySelector('#settings-week').value); const rawYear = Number(document.querySelector('#settings-year').value); const normalizedWeek = getNormalizedWeekSettings(rawYear, rawWeek); const settings = { calendarWeek: normalizedWeek.calendarWeek, year: normalizedWeek.year, workHoursPerDay: Number(document.querySelector('#settings-hours').value), expensesPerWorkdayChf: Number(document.querySelector('#settings-expenses').value) }; if (rawWeek < 1 || rawWeek > 53 || rawYear < 2000 || rawYear > 2100 || settings.workHoursPerDay < 0 || settings.expensesPerWorkdayChf < 0) return; state.settings = settings; saveState(); });
   document.body.addEventListener('click', (event) => handleActionClick(event));
   document.querySelector('#assignment-status').addEventListener('change', () => document.querySelector('#assignment-work-label').hidden = document.querySelector('#assignment-status').value !== 'assigned');
@@ -355,4 +426,4 @@ async function initApp() {
 
 initApp();
 
-function openCarpoolForEdit(carpoolId) { const carpool = (state.carpools || []).find((item) => item.id === carpoolId); if (!carpool) return; document.querySelector('#carpool-id').value = carpool.id; document.querySelector('#carpool-day').value = carpool.weekday; document.querySelector('#carpool-driver').value = carpool.driverId; document.querySelector('#carpool-work').value = carpool.workId; document.querySelector('#carpool-arrival-time').value = carpool.arrivalTime || ''; Array.from(document.querySelector('#carpool-passengers').options).forEach((option) => { option.selected = (carpool.passengerIds || []).includes(option.value); }); }
+function openCarpoolForEdit(carpoolId) { const carpool = (state.carpools || []).find((item) => item.id === carpoolId); if (!carpool) return; document.querySelector('#carpool-id').value = carpool.id; document.querySelector('#carpool-day').value = carpool.weekday; document.querySelector('#carpool-driver').value = carpool.driverId; updateCarpoolFormOptions(); document.querySelector('#carpool-driver').value = carpool.driverId; updateCarpoolFormOptions(); document.querySelector('#carpool-work').value = carpool.workId; document.querySelector('#carpool-arrival-time').value = carpool.arrivalTime || ''; Array.from(document.querySelector('#carpool-passengers').options).forEach((option) => { option.selected = (carpool.passengerIds || []).includes(option.value); }); document.querySelector('#carpool-form').scrollIntoView({ behavior: 'smooth', block: 'start' }); }

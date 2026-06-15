@@ -79,11 +79,12 @@
         <div id="carpool-empty" class="empty-state"></div>
         <form id="carpool-form" class="card form-grid">
           <input type="hidden" id="carpool-id" />
-          <label>Tag *<select id="carpool-day" required></select></label>
-          <label>Fahrer / Fahrzeug *<select id="carpool-driver" required></select></label>
+          <label>1. Wochentag auswählen *<select id="carpool-day" required></select></label>
+          <div id="carpool-working-employees" class="carpool-day-summary full-width" aria-live="polite"></div>
+          <label>2. Fahrer mit Fahrzeug *<select id="carpool-driver" required></select><span id="carpool-seat-info" class="muted"></span></label>
           <label>Baustelle *<select id="carpool-work" required></select></label>
           <label>Auf Baustelle um *<input id="carpool-arrival-time" type="time" required /></label>
-          <label class="full-width">Mitfahrer<select id="carpool-passengers" multiple size="6"></select></label>
+          <label class="full-width">3. Mitfahrer ohne Fahrgemeinschaft auswählen<select id="carpool-passengers" multiple size="6"></select></label>
           <div class="form-actions"><button type="submit">Fahrgemeinschaft speichern</button><button type="button" class="secondary" id="carpool-reset">Zurücksetzen</button></div>
         </form>
         <div id="carpool-list" class="card-list"></div>
