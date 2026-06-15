@@ -1,4 +1,7 @@
 const STORAGE_KEY = 'wochenplaner-mvp-v1';
+const DB_NAME = 'wochenplaner-db';
+const DB_STORE = 'app-state';
+const DB_STATE_KEY = 'state';
 const WEEKDAYS = [
   ['monday', 'Montag'], ['tuesday', 'Dienstag'], ['wednesday', 'Mittwoch'], ['thursday', 'Donnerstag'], ['friday', 'Freitag'],
 ];
@@ -9,14 +12,58 @@ const defaultSettings = () => {
   const now = new Date();
   return { calendarWeek: getIsoWeek(now), year: getIsoWeekYear(now), workHoursPerDay: 8.5, expensesPerWorkdayChf: 18 };
 };
-let state = loadState();
+let state = createFallbackState();
 let activeAssignment = null;
 
-function loadState() {
-  const fallback = { employees: [], works: [], assignments: [], settings: defaultSettings() };
+function createFallbackState() { return { employees: [], works: [], assignments: [], settings: defaultSettings() }; }
+function openDatabase() {
+  return new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) { reject(new Error('IndexedDB nicht verfügbar')); return; }
+    const request = indexedDB.open(DB_NAME, 1);
+    request.addEventListener('upgradeneeded', () => request.result.createObjectStore(DB_STORE));
+    request.addEventListener('success', () => resolve(request.result));
+    request.addEventListener('error', () => reject(request.error));
+  });
+}
+function readDatabaseState() {
+  return openDatabase().then((db) => new Promise((resolve, reject) => {
+    const transaction = db.transaction(DB_STORE, 'readonly');
+    const request = transaction.objectStore(DB_STORE).get(DB_STATE_KEY);
+    request.addEventListener('success', () => resolve(request.result));
+    request.addEventListener('error', () => reject(request.error));
+    transaction.addEventListener('complete', () => db.close());
+  }));
+}
+function writeDatabaseState(nextState) {
+  return openDatabase().then((db) => new Promise((resolve, reject) => {
+    const transaction = db.transaction(DB_STORE, 'readwrite');
+    transaction.objectStore(DB_STORE).put(nextState, DB_STATE_KEY);
+    transaction.addEventListener('complete', () => { db.close(); resolve(); });
+    transaction.addEventListener('error', () => { db.close(); reject(transaction.error); });
+  }));
+}
+async function loadState() {
+  const fallback = createFallbackState();
+  try {
+    const databaseState = await readDatabaseState();
+    if (databaseState) return { ...fallback, ...databaseState };
+  } catch (error) {
+    console.warn('IndexedDB konnte nicht gelesen werden, localStorage-Fallback wird verwendet.', error);
+  }
   try { return { ...fallback, ...(JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}) }; } catch { return fallback; }
 }
-function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); renderAll(); }
+async function saveState() {
+  try {
+    await writeDatabaseState(state);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    renderAll();
+    updateStorageStatus('In der lokalen Datenbank gespeichert');
+  } catch (error) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    renderAll();
+    updateStorageStatus('Im Browser-Fallback gespeichert');
+  }
+}
 function id(prefix) { return `${prefix}-${crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36)}`; }
 function money(value) { return new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF' }).format(value || 0); }
 function getIsoWeek(date) { const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())); d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7)); const y = new Date(Date.UTC(d.getUTCFullYear(), 0, 1)); return Math.ceil((((d - y) / 86400000) + 1) / 7); }
@@ -75,6 +122,47 @@ function renderCell(employeeId, weekday) { const a = findAssignment(employeeId, 
 function renderCosts() { const c = calculateCosts(); document.querySelector('#cost-summary').innerHTML = `<div class="summary-card"><h3>Wochentotal</h3><div class="summary-row"><span>Lohnkosten</span><strong>${money(c.wageTotal)}</strong></div><div class="summary-row"><span>Spesen</span><strong>${money(c.expensesTotal)}</strong></div><div class="summary-row"><span>Total</span><strong>${money(c.total)}</strong></div></div><div class="summary-card"><h3>Kosten pro Los</h3>${Object.entries(CATEGORIES).map(([key,label]) => `<div class="summary-row"><span>${label}</span><strong>${money(c.byCategory[key])}</strong></div>`).join('')}</div><div class="summary-card"><h3>Kosten pro Mitarbeiter</h3>${c.byEmployee.map((row) => `<div class="summary-row"><span>${escapeHtml(row.employee.firstName)} (${row.workdays} Tage)</span><strong>${money(row.total)}</strong></div>`).join('') || '<p class="muted">Keine Mitarbeiter.</p>'}</div>`; }
 function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char])); }
 
+function updateStorageStatus(message) {
+  const status = document.querySelector('#storage-status');
+  if (!status) return;
+  const savedAt = new Date().toLocaleString('de-CH', { dateStyle: 'short', timeStyle: 'short' });
+  status.textContent = `${message || 'Daten werden automatisch in der lokalen Browser-Datenbank gespeichert'} · Stand: ${savedAt}`;
+}
+function exportBackup() {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `wochenplaner-backup-${state.settings.year}-kw-${state.settings.calendarWeek}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+  updateStorageStatus('Backup-Datei erstellt');
+}
+function normalizeImportedState(imported) {
+  if (!imported || typeof imported !== 'object') throw new Error('Ungültige Datei');
+  return {
+    employees: Array.isArray(imported.employees) ? imported.employees : [],
+    works: Array.isArray(imported.works) ? imported.works : [],
+    assignments: Array.isArray(imported.assignments) ? imported.assignments : [],
+    settings: { ...defaultSettings(), ...(imported.settings || {}) },
+  };
+}
+function importBackup(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.addEventListener('load', () => {
+    try {
+      state = normalizeImportedState(JSON.parse(reader.result));
+      saveState();
+      updateStorageStatus('Backup importiert und gespeichert');
+    } catch (error) {
+      alert('Die Backup-Datei konnte nicht importiert werden. Bitte eine gültige Wochenplaner-JSON-Datei auswählen.');
+    }
+  });
+  reader.readAsText(file);
+}
+
+
 function exportPdf() {
   const jspdf = window.jspdf?.jsPDF; if (!jspdf) { alert('PDF-Bibliothek konnte nicht geladen werden.'); return; }
   const doc = new jspdf(); const days = getWeekDates(state.settings.year, state.settings.calendarWeek); const costs = calculateCosts();
@@ -92,6 +180,8 @@ function bindEvents() {
   document.querySelector('#employee-reset').addEventListener('click', () => { document.querySelector('#employee-form').reset(); document.querySelector('#employee-id').value = ''; });
   document.querySelector('#work-form').addEventListener('submit', (event) => { event.preventDefault(); const work = { id: document.querySelector('#work-id').value || id('work'), title: document.querySelector('#work-title').value.trim(), description: document.querySelector('#work-description').value.trim() || undefined, category: document.querySelector('#work-category').value }; if (!work.title || !CATEGORIES[work.category]) return; state.works = state.works.filter((w) => w.id !== work.id).concat(work); event.target.reset(); document.querySelector('#work-id').value = ''; saveState(); });
   document.querySelector('#work-reset').addEventListener('click', () => { document.querySelector('#work-form').reset(); document.querySelector('#work-id').value = ''; });
+  document.querySelector('#export-backup').addEventListener('click', exportBackup);
+  document.querySelector('#import-backup').addEventListener('change', (event) => { importBackup(event.target.files[0]); event.target.value = ''; });
   document.querySelector('#settings-form').addEventListener('submit', (event) => { event.preventDefault(); const settings = { calendarWeek: Number(document.querySelector('#settings-week').value), year: Number(document.querySelector('#settings-year').value), workHoursPerDay: Number(document.querySelector('#settings-hours').value), expensesPerWorkdayChf: Number(document.querySelector('#settings-expenses').value) }; if (settings.calendarWeek < 1 || settings.calendarWeek > 53 || settings.workHoursPerDay < 0 || settings.expensesPerWorkdayChf < 0) return; state.settings = settings; saveState(); });
   document.body.addEventListener('click', (event) => handleActionClick(event));
   document.querySelector('#assignment-status').addEventListener('change', () => document.querySelector('#assignment-work-label').hidden = document.querySelector('#assignment-status').value !== 'assigned');
@@ -108,4 +198,11 @@ function handleActionClick(event) {
 }
 function openAssignmentDialog(employeeId, weekday) { activeAssignment = { employeeId, weekday }; const a = findAssignment(employeeId, weekday); document.querySelector('#assignment-status').value = a?.status || 'empty'; document.querySelector('#assignment-work').innerHTML = state.works.map((w) => `<option value="${w.id}">${escapeHtml(w.title)} - ${CATEGORIES[w.category]}</option>`).join(''); document.querySelector('#assignment-work').value = a?.workId || state.works[0]?.id || ''; document.querySelector('#assignment-work-label').hidden = document.querySelector('#assignment-status').value !== 'assigned'; document.querySelector('#assignment-dialog').showModal(); }
 
-bindEvents(); renderAll();
+async function initApp() {
+  state = await loadState();
+  bindEvents();
+  renderAll();
+  updateStorageStatus();
+}
+
+initApp();
